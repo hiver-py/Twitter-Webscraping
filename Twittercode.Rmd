@@ -1,0 +1,810 @@
+---
+title: "Twitter API tutorial"
+subtitle: "A step-by-step guide"
+author: "Christophe Bontemps & Patrick Jonsson  (SIAP)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    highlight: tango
+    number_sections: yes
+    theme: lumen
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( message = FALSE, warning = FALSE, 
+                       results =FALSE, echo = TRUE,
+                       fig.width=7, fig.height=4, 
+                       dev="png", 
+                       dev.args=list(type="cairo"), dpi=96)
+
+```
+
+
+# Accessing Twitter data
+
+As for any project we need to load some packages: usual ones and specific ones
+
+```{r packages}
+
+# Twitter and text analysis
+library(rtweet) # Used to access Twitters API 
+library(sentimentr) # Used to do the sentiment analysis
+
+# Tables and outputs formating 
+library(knitr) # Used to create tables 
+library(papeR) # Creates better looking tables when knitting
+library(kableExtra) # Stylizes the tables when knitting
+
+# Data processing 
+library(tidyverse) # Used in all data manipulation 
+library(tidytext) # Used for the unnest_tokens() function that preprocess text data
+library(naniar) # Used to visualize all variables with missing values
+library(tm) # Textmining package used in the preprocessing of data for the wordcloud
+library(lubridate) # We use lubridate to manipulate the data for the time series plot
+
+# Graphical packages 
+library(ggplot2) # Used for visualizing the data
+library(plotly) # Used for interactive scatter plots
+library(RColorBrewer) # Allows easy choice of colors in visualizations
+library(wordcloud2) # Used to visualize the wordcloud
+library(webshot) # Used to be able to knit wordclouds to html
+library(htmlwidgets) # Used to be able to knit wordclouds to html
+
+# A function for having nice color palette
+greenpal <- colorRampPalette(brewer.pal(9,"Greens"))
+```
+
+## Foreword: Access rights {}
+
+This tutorial covers how to access Twitters developer API using the *rtweet* package. The entire workflow from authentication, scraping tweets, and a brief analysis is covered to provide with knowledge and inspiration on how you can use Twitter as a data source for your own projects in the future. 
+
+### Request access first {-}
+
+To get access to Twitters API you need to apply for a developer account. This can be done on their developer website [https://developer.twitter.com/en/apply-for-access]. To do this you need to fill out the purpose of your work and agree to their terms of use. Getting access to the API is not instant, as they manually approve/deny applications.
+
+After getting approved for developer access to Twitter an App can be created under the Projects & App page on [https://developer.twitter.com/en]. 
+After creating this you can generate keys and tokens under the 'Keys and tokens' subpage in your App, this will be specific keys used for each of your projects. 
+
+### Get the *key* {-}
+The consumer key and secret is your way of verifying your identity when you make requests, and the authentication token and secrets will allow you to later on request data.^[If you were to lose any of these, or want to change them, you can do so from this page as well.] 
+
+### Create a *token* {-}
+Using *create_token()* from the *rtweet* package we generate an access token. 
+
+> The keys, tokens and secret you see in this tutorial will not work if you try and run them, as these are personal.
+
+When you use Twitters API for developers you undertake legal responsibility as the user of their API. What this means for you may depend on your intended use of the API, which you specify when you apply for access and create an App on their website. Therefore what we show here are just examples of what they can look like. The token that gets created below will allow for access to their API so requests can be sent and data can get received. 
+
+```{r}
+# The name you assigned to your created app
+appname <- "BDGS"
+
+# The various forms of identifications we'll need to access the API for future requests
+# NOTE: These are not actual working keys, never share your API keys and secrets with anyone, as they are personal!
+
+
+# Found under: Consumer Keys: API Key and Secret
+key <- "tlEj2gWfWrZJfGkPd4Fok5jHol4m"
+secret <- "ZzpfnerT88DIxvfMq5tqsOnb2fEWFVJNqhSj54KhVUz7vv7Jt7GY4c"
+
+# Found under Authentication tokens: Access Token and Secret
+access_token = "140330422125090881-FLEWPBOda37gu9trEyUgcxUBsWRNfdwz"
+access_secret = "0QGVfVHD2aPGuBn353NKnM7rwl1hQuuCODYUcCIEAnSB2gh"
+
+# This creates the token we use to make requests. 
+twitter_token <- rtweet::create_token(
+  app = appname,
+  consumer_key = key,
+  consumer_secret = secret,
+  access_token = access_token,
+  access_secret = access_secret)
+
+twitter_token
+```
+
+## Specifying and limiting the search
+
+
+The created token will be used when we begin searching for tweets with the *search_tweets()* function. In this tutorial tweets will be scraped from different countries. A downside of both the *rtweet* and twitteR packages is that you cannot specify certain countries. However, you can provide the *search_tweet()* function with a geographic code. This will be a circle, which you specify in the form of a string with the format: 'longitude,latitude,radius'. 
+
+The website [mapdevelopers](https://www.mapdevelopers.com/draw-circle-tool.php) is used to draw circles on a map to be able to create the geographic code, the specific circles used in this example can be found in the annex of this tutorial. Unfortunately not many countries are perfectly circular so in this example one country may require several requests. 
+
+
+A few more detail needs to be specified, such as:
+- What you want to search for in the tweets, 
+- The maximum amount of tweets from each request, and 
+- whether you want to include re-tweets in your search. 
+
+Note that the *rtweet* package only returns tweets that were made between 6-9 days ago.
+
+## The request
+
+In the request a search for specific terms such as "*domestic abuse*" is done. 
+
+> It is important to structure your request with the correct formatting of quotation marks. 
+
+If you want to search for a specific term, use double quotation, and then cover the entire request in single quotation marks. 
+
+One can also use the **OR** operator to specify that it only needs to any of the double quotation marked terms, not all of them. If you want to make more complex searches you can also use the **AND** operator instead of or together with the **OR** operator. More information about how to structure your query is found in the help vignette for the *rtweet* package.
+
+### Limiting the volume {-}
+You may want to limit the amount of tweets you search for as you have a limited amount you can gather each month. The limit of how many tweets you can gather can be found in the webpage for your application on twitters developers page. If you want to avoid searching for re-tweets you can set **include_rts = FALSE** in your **search_tweets()** function.
+
+Below is a series of queries for different terms and different countries
+
+> The request here is based on:   '"domestic abuse" OR "domestic violence" OR "emotional abuse" OR "sexual violence"' for 5 countries 
+
+```{r gathering, cache=TRUE}
+Request = '"domestic abuse" OR "domestic violence" OR "emotional abuse" OR "sexual violence"'
+N = 1000
+# Scrapes for tweets in India
+tweets_IND_1 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "29.05,76.89,220mi")
+
+tweets_IND_2 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "23.44,73.38,224mi")
+
+tweets_IND_3 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "23.34,81.40,262mi")
+
+tweets_IND_4 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "13.85,76.46,465mi")
+
+tweets_IND_5 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "18.42,83.62,106mi")
+
+tweets_IND_6 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "22.66,87.31,106mi")
+
+tweets_BDG <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "23.36,90.84,112mi")
+
+# Scrapes for tweets in Mongolia
+tweets_MNG_1 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "46.95,109.33,284mi")
+
+tweets_MNG_2 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "47.37,97.37,272mi")
+
+# Scrapes for tweets in Nepal
+tweets_NPL_1 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "28.21,83.91,57mi")
+
+tweets_NPL_2 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "27.50,85.45,47mi")
+
+tweets_NPL_3 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "27.21,87.18,57mi")
+
+# Scrapes for tweets in Philippines
+tweets_PHI <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "12.88,123.43,523mi")
+
+# Scrapes for tweets in Vietnam
+tweets_VNM_1 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = " 21.23,105.41,117mi")
+
+tweets_VNM_2 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "18.64,106.51,76mi")
+
+tweets_VNM_3 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "16.69,108.32,97mi")
+
+tweets_VNM_4 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "13.23,109.53,154mi")
+
+tweets_VNM_5 <- search_tweets(q = Request,
+                        n = N,
+                        include_rts = FALSE,
+                        token = twitter_token,
+                        geocode  = "9.84,106.80,133mi")
+
+```
+
+
+We can then bind the scraped tweets from each respective country and add a new variable to each countries tweets dataframe to make things easier to handle. 
+
+```{r}
+tweets_IND <- do.call('rbind', list(tweets_IND_1, tweets_IND_2, tweets_IND_3, tweets_IND_4, tweets_IND_5, tweets_IND_6))
+if (length(tweets_IND_1) > 0 | length(tweets_IND_2) > 0 | length(tweets_IND_3) > 0 | length(tweets_IND_4) > 0 | length(tweets_IND_5) > 0 | length(tweets_IND_6) > 0 ){
+  tweets_IND$CountryCode <- 'IND'
+}
+```
+
+
+```{r}
+tweets_MNG <- do.call('rbind', list(tweets_MNG_1, tweets_MNG_2))
+if (length(tweets_MNG) > 0){
+  tweets_MNG$CountryCode <- 'MNG'
+}
+```
+
+```{r}
+if (length(tweets_PHI) > 0){
+tweets_PHI$CountryCode <- 'PHI'
+}
+```
+
+```{r}
+tweets_NPL <- do.call('rbind', list(tweets_NPL_1, tweets_NPL_2,tweets_NPL_3))
+if (length(tweets_NPL_1) > 0 | length(tweets_NPL_2) > 0 | length(tweets_NPL_3) > 0 ){
+  tweets_NPL$CountryCode <- 'NPL'
+}
+```
+
+```{r}
+tweets_VNM <- do.call('rbind', list(tweets_VNM_1, tweets_VNM_2, tweets_VNM_3, tweets_VNM_4, tweets_VNM_5))
+if (length(tweets_VNM) > 0){
+ tweets_VNM$CountryCode <- 'VNM'
+}
+```
+
+
+##  Data formatting 
+All of the tweets from each respective countries tweets can be combined into one data frame: *new_twitter_data*.
+
+```{r}
+# Combines all the countries tweets into one dataframe. 
+new_twitter_data <- do.call('rbind', list(tweets_IND, tweets_MNG, tweets_PHI, tweets_NPL, tweets_VNM))
+```
+
+> Today, we have collected *`r nrow(new_twitter_data)`* tweets (this number is automatically updated here).
+
+The tweets you search for can be combined with previous data you have saved, or if this is the first time you run the function below an Rda file is fetched from SIAP's server that contains some tweets to get you started. It then adds the *new_twitter_data* tweets which you scraped to the Rda-file provided by SIAP. This function is useful if you want to scrape tweets over a longer period of time. Since *search_tweets()* covers an interval of time it also removes any duplicate tweets that is gathered.
+
+```{r}
+# This function check checks if you have previous tweets saved in a file called twitter_data.Rda
+# If you do it adds the newly gathered tweets to the existing file, if you don't it creates a new .Rda file.
+
+if (file.exists('twitter_data.Rda') == FALSE){
+  load(url("https://www.unsiap.or.jp/on_line/Big_Data/twitter_data.Rda"))
+  twitter_data = rbind(twitter_data, new_twitter_data)
+  save(twitter_data, file = 'twitter_data.Rda')
+} else {
+  load('twitter_data.Rda')
+  twitter_data = rbind(twitter_data, new_twitter_data)  # this has to be recursive I guess (same name on left and right..)
+  
+  twitter_data <- twitter_data %>% # take latest harvest date
+  distinct(status_id, .keep_all = TRUE) # .keep_all to keep all variables
+  save(twitter_data, file = 'twitter_data.Rda')
+}
+```
+
+
+# Data cleaning
+
+The file before cleaning is composed of previous tweet collection *plus* today's harvest. **We have now `r nrow(twitter_data)`** tweets (*this number is automatically updated here*).
+
+## Removing duplicates
+
+In case duplicates may still exists within the data. They can easily be removed through the following code:
+
+```{r}
+all_tweets_unique <- twitter_data %>% 
+  mutate(harvest_date = as.Date(created_at)) %>%
+  arrange(desc(harvest_date)) %>% # take latest harvest date
+  distinct(status_id, .keep_all = TRUE) # .keep_all to keep all variables
+
+#Attention:  Data set to use for the analysis should be "all_tweets_unique" to avoid duplicates
+
+```
+
+## Visualizing missing values
+
+Now that the data has been gathered it is time to start exploring it. The function gg_miss_var() from the naniar package gives an overview of how many % of observations are missing from each variable:
+
+```{r}
+gg_miss_var(all_tweets_unique, show_pct = TRUE)
+```
+
+It appears that out of the roughly 90 variables in the data we gathered about 60% of them has a considerable amount of missing observations. We can remove these as they may be hard to analyze.
+
+
+```{r}
+# Selects columns without NA/missing observations
+all_tweets_unique_no_missing <- all_tweets_unique %>%
+    select_if(~ !any(is.na(.)))
+gg_miss_var(all_tweets_unique_no_missing, show_pct = TRUE)
+``` 
+
+The variables that remains seems to be different user related and tweet related variables which can be explored further.
+
+
+## Descriptive statistics
+
+> After cleaning, we have a data frame with  `r nrow(all_tweets_unique_no_missing)` observations (tweets) and `r ncol(all_tweets_unique_no_missing)` variables  (*this number is automatically updated here*).
+
+### Relationships between the numerical variables {-}
+
+With the numerical variables in the data we can explore the relationship between these variables; for instance if there are any patterns between the favorite count, re-tweet count and follower count.
+
+```{r}
+p <- ggplot(all_tweets_unique_no_missing, aes(x=favorite_count, y=retweet_count, color=CountryCode)) + 
+  geom_point() +
+  geom_rug(colour = "grey", alpha =0.6)+
+  labs(y = 'Re-tweet Count', x = 'Favourite Count') +
+  theme_minimal()
+p
+
+```
+
+As we may expect *re-tweet count** and **favorite count** have a distinct pattern where tweets with more re-tweets often also get more favorited by other twitter users. 
+
+Using *ggplotly()* we can create an interactive scatterplot, where we can zoom in on certain areas of the plot and get information about individual data points (*only in the RStudio environment*):
+
+```{r}
+ggplotly(p)
+```
+
+
+```{r}
+ggplot(all_tweets_unique_no_missing, aes(x=followers_count, y=retweet_count, color=CountryCode)) +
+  geom_point() +
+  geom_rug(colour = "grey", alpha =0.6)+
+  labs(y = 'Retweet Count', x = 'Followers Count') + 
+  theme_minimal()
+```
+
+Between the variables followers count and re-tweet count there isn't an obvious pattern where users with more followers gets re-tweeted more. 
+
+```{r}
+ggplot(all_tweets_unique_no_missing, aes(x=followers_count, y=favorite_count, color=CountryCode)) +
+  geom_point() +
+  labs(y = 'Favorite Count', x = 'Followers Count') + 
+  theme_minimal()
+  
+```
+
+As with the relationship between re-tweets and followers count, there isn't a clear pattern between how many followers a user has and how many times their tweets get favourited. 
+
+## Creating variables of interest: Counting tweets per day
+
+If tweets are scraped over a period of time it is possible to see if there are any trends that occur during this period. A new variable can be created that holds information about what date the tweet was scraped which can be visualized as a time series plot: 
+
+```{r}
+# This chunk creates the time series data
+nb_days <- floor(as.numeric(max(all_tweets_unique_no_missing$harvest_date) - min(all_tweets_unique_no_missing$harvest_date)))
+
+df_per_slot <- all_tweets_unique_no_missing %>% 
+  mutate(
+    datetime = as_datetime(harvest_date),
+    tweet_date = round_time(datetime, n = "6 hours")
+  ) %>% 
+  count(is_retweet, tweet_date) 
+
+```
+
+
+# Analysis of the Tweets collected  
+
+The data collected are quite limited by nature, however we may address several research questions
+
+#### Is there an increase/decrease/peak in the tweets over time? {-}
+
+
+```{r}
+
+ggplot(df_per_slot) +
+ aes(x = tweet_date, y = n) +
+ geom_line(size = 1L, colour = "#756bb1") +
+ labs(y = 'Count', x = 'Date') + 
+ theme_minimal()
+```
+
+
+A strong peak occurred on 12 July, but since then the amount of tweets seems to hover around 100 per day. 
+
+> A possible reason for this spike could be related to the soccer grand finals being played in Euros 2021, which increased the amount of attention the subject got as domestic violence tends to increase when there are big sporting events such as soccer. 
+
+Note that the amount of tweets before this day is quite a bit lower than after 12 July. This is due to the hard limit on the amount of tweets scraped was lower in the beginning of this project, meaning that this low amount of tweets does not reflect how many tweets were actually made. 
+
+
+#### Typology of abuse mentioned in Tweets {-}
+
+The typology of abuse mentioned in the tweets can be broken down as well: 
+
+```{r, results='asis'}
+DomesticAbuse <- grep(all_tweets_unique_no_missing$text, pattern = 'domestic', ignore.case = TRUE)
+EmotionalAbuse <- grep(all_tweets_unique_no_missing$text, pattern = 'emotional', ignore.case = TRUE)
+SexualAbuse <- grep(all_tweets_unique_no_missing$text, pattern = 'sexual', ignore.case = TRUE)
+
+Abuse_data = data.frame(AbuseType = c("Domestic",  "Sexual", "Emotional"), Count = c(length(DomesticAbuse),  length(SexualAbuse), length(EmotionalAbuse)))
+Abuse_data$AbuseType <- as.factor(Abuse_data$AbuseType)
+Abuse_data <- prettify(Abuse_data)
+kable(Abuse_data[,2:3])
+
+```
+
+
+> *Domestic* is the most common pattern in the tweet, which is not too surprising as it is a broad term. 
+
+#### What are the top ten most common words? {-}
+
+```{r}
+text <- all_tweets_unique_no_missing %>% select(text)
+# gsub() searches for patterns in our text, and can then be replaced. We replace with '' to completely remove them.
+# ignore.case = TRUE allows us to remove it irrespective if the pattern we search for is uppercased or lowercased. 
+# Removes URLs
+CommonWords <- gsub('\\s?(n|f|ht)(tp)(s?)(://)([^\\.]*)[\\.|/](\\S*)', '', text, ignore.case = TRUE)
+# Removes words with digits (due to emojis)
+CommonWords <- gsub('[0-9]+(\\S*)', '', CommonWords, ignore.case = TRUE)
+# Removes ampersands
+CommonWords <- gsub('&amp;', '', CommonWords, ignore.case = TRUE)
+CommonWords <- tibble(text = CommonWords)
+CommonWords <- CommonWords %>%
+  unnest_tokens(word, text) %>% anti_join(stop_words) 
+
+CommonWords %>% 
+  count(word, sort = TRUE) %>% 
+  top_n(10) %>%
+  mutate(Word = reorder(word,n)) %>%
+  ggplot(aes(x=Word, y=n)) +
+  geom_col(fill = '#756bb1' ) +
+  xlab(NULL) + 
+  coord_flip() +
+  theme_minimal() +
+  labs(y = 'Frequency', title = 'Top 10 most common words') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+As expected some of the most common words are the terms we use when we make our request to the Twitter API. We specifically searched for some of these terms such as: 'domestic abuse', 'domestic violence', 'emotional abuse', 'sexual violence', and 'women'. Therefore these terms aren't as interesting as we expect to see these as we search for them. 
+
+> The terms used in the query should be removed and a new visualization can be made without these words to then see what the most common words are
+
+```{r}
+FilterWords <- c('domestic', 'violence', 'abuse', 'sexual', 'emotional', 'women', 'woman')
+CommonWordsFiltered <- all_tweets_unique_no_missing %>%
+       gsub(x = text, pattern = '(?=@)', replacement = " ", perl = TRUE) %>%
+      # lowercase the text
+      tolower() %>%
+      # Removes the words listed above in the FilterWords vector
+      removeWords(words = FilterWords) %>%
+      # Removes linebreaks (\n) and ampersands (&) 
+      str_replace_all(pattern = "\n", replacement = "") %>%
+      str_replace_all(pattern = "&amp;", replacement = "") %>%
+      # remove accounts mentionned with an @
+      str_replace_all(pattern = "@([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove URLs
+      str_replace_all(pattern = "http([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove punctuaction signs except #
+      gsub(x = ., pattern = "(?!#)[[:punct:]]", replacement = "", perl = TRUE) %>%
+      # remove isolated digits
+      str_replace_all(pattern = " [[:digit:]]* ", replacement = " ")
+
+CommonWordsFiltered <- tibble(text = CommonWordsFiltered)
+CommonWordsFiltered <- CommonWordsFiltered %>%
+  unnest_tokens(word, text) %>% anti_join(stop_words)
+
+CommonWordsFiltered %>%
+  count(word, sort = TRUE) %>%
+  top_n(10) %>%
+  mutate(Word = reorder(word,n)) %>%
+  ggplot(aes(x=Word, y=n)) +
+  geom_col(fill = '#756bb1' ) +
+  xlab(NULL) +
+  coord_flip() +
+  theme_minimal() +
+  labs(y = 'Frequency', title = 'Top 10 most common words') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Once the words that was included in the search has been removed the results seems to show that there is quite a few words that are equally commonly occurring. The most common one is *'bill'*, which indicates to legislation being a commonly tweeted topic. 
+
+#### Can we visualize text using a *"wordcloud"*? {-}
+
+A prettier way to visualize common words is using word clouds. Using *wordcloud2()* package we can create an interactive word cloud that can also be turned into a png if you want to export it. 
+
+This action needs a bit of text cleaning, in particular:
+
+-  remove symbols
+-  harmonize words to lower case
+-  remove linebreaks (\n) and ampersands (&)
+- remove punctuaction signs except #
+- remove accounts mentionned with an @
+- remove URLs
+- ...
+
+
+```{r, cache = TRUE}
+# This large chunk of codes removes special symbols, certain patterns in the tweets, stop words and turns 
+# some of the common words that are in plural to singular
+
+WordCloudData <- all_tweets_unique_no_missing %>%
+  mutate(
+    # add spaces before the # and @
+    clean_text = gsub(x = text, pattern = "(?=@)", replacement = " ", perl = TRUE) %>%
+      # lowercase the text
+      tolower() %>%
+      # Removes linebreaks (\n) and ampersands (&) 
+      str_replace_all(pattern = "\n", replacement = "") %>%
+      str_replace_all(pattern = "&amp;", replacement = "") %>%
+      # remove accounts mentionned with an @
+      str_replace_all(pattern = "@([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove URLs
+      str_replace_all(pattern = "http([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove punctuaction signs except #
+      gsub(x = ., pattern = "(?!#)[[:punct:]]", replacement = "", perl = TRUE) %>%
+      # lowercase the text
+      tolower() %>%
+      # remove isolated digits
+      str_replace_all(pattern = " [[:digit:]]* ", replacement = " ")
+  )
+
+CleanedWordCloud <- SimpleCorpus(VectorSource(WordCloudData$clean_text),control = list(language = "en"))
+
+CleanedWordCloud <- tm_map(CleanedWordCloud, removeWords, stopwords("english"))
+CleanedWordCloud <- tm_map(CleanedWordCloud, stripWhitespace)
+
+# This is a simple function that takes the plural form of a word and turns it into singular
+tosingular <- content_transformer(
+  function(x, pattern, replacement) gsub(pattern, replacement, x)
+  )
+
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "women", "woman") 
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "men", "man")
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "girls", "girl")
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "children", "child") 
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "victims", "victim") 
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "survivors", "survivor") 
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "daughters", "daughter")
+CleanedWordCloud <- tm_map(CleanedWordCloud, tosingular, "cases", "case")
+
+# Removes som additional filler words.
+rm_words <- c("will", "use", "used", "using", "today", "can", "one", "join", "day", "week", "just", "come", "first", "last", "get", "next", "via", "dont", "also", "want", "make", "take", "may",  "still", "need", "now", "another", "maybe", "getting", "since", "way")
+CleanedWordCloud <- tm_map(CleanedWordCloud, removeWords, rm_words)
+```
+
+
+```{r,  cache =  TRUE }
+# Processes the data into the right format to be represented in a word cloud
+
+dtm <- TermDocumentMatrix(CleanedWordCloud)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m), decreasing = TRUE)
+d <- data.frame(word = names(v), freq = v)
+
+l <- nrow(d)
+
+# Change to square root to reduce difference between sizes
+d_sqrt <- d %>% 
+  mutate(freq = sqrt(freq))
+
+  my_graph <- wordcloud2(
+  d_sqrt,
+  size = 0.5, # sqrt : 0.4
+  minSize = 0.1, # sqrt : 0.2
+  rotateRatio = 0.6,
+  gridSize = 5, # sqrt : 5
+  color = c(rev(tail(greenpal(50), 40)),
+            rep("grey", nrow(d_sqrt) - 40)) # green and grey
+)
+
+# This part lets you knit it to html
+# If knitting wordcloud to html does not work, try running  webshot::install_phantomjs() in console then knit again.
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc1.png", delay = 7, vwidth = 900, vheight = 900)
+
+my_graph
+# If knitting wordcloud to html does not work, try running  webshot::install_phantomjs() in console then knit again.
+```
+
+> The terms that were mentioned in the search seems to be a lot more common than other words. As previously, we can remove the words that were included when we searched for tweets
+
+
+```{r}
+# This large chunk of codes removes special symbols, certain patterns in the tweets, stop words and turns 
+# some of the common words that are in plural to singular
+
+FilteredWordCloudData <- all_tweets_unique_no_missing %>%
+  mutate(
+    # add spaces before the # and @
+    clean_text = gsub(x = text, pattern = "(?=@)", replacement = " ", perl = TRUE) %>%
+      gsub(x = ., pattern = "(?=#)", replacement = " ", perl = TRUE) %>%
+      # lowercase the text
+      tolower() %>%
+      # Removes the words listed above in the FilterWords vector
+      removeWords(words = FilterWords) %>%
+      # Removes linebreaks (\n) and ampersands (&) 
+      str_replace_all(pattern = "\n", replacement = "") %>%
+      str_replace_all(pattern = "&amp;", replacement = "") %>%
+      # remove accounts mentioned with an @
+      str_replace_all(pattern = "@([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove URLs
+      str_replace_all(pattern = "http([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove punctuation signs except #
+      gsub(x = ., pattern = "(?!#)[[:punct:]]", replacement = "", perl = TRUE) %>%
+      # lowercase the text
+      tolower() %>%
+      # remove isolated digits
+      str_replace_all(pattern = " [[:digit:]]* ", replacement = " ")
+  )
+
+FilteredWordCloud <- SimpleCorpus(VectorSource(FilteredWordCloudData$clean_text), control = list(language = "en"))
+
+FilteredWordCloud <- tm_map(FilteredWordCloud, removeWords, stopwords("english"))
+FilteredWordCloud <- tm_map(FilteredWordCloud, stripWhitespace)
+
+
+# This is a simple function that takes the plural form of a word and turns it into singular
+tosingular <- content_transformer(
+  function(x, pattern, replacement) gsub(pattern, replacement, x)
+  )
+
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "women", "woman")
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "men", "man") 
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "girls", "girl")
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "children", "child") 
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "victims", "victim") 
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "survivors", "survivor") 
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "daughters", "daughter")
+FilteredWordCloud <- tm_map(FilteredWordCloud, tosingular, "cases", "case")
+
+# Removes som additional filler words.
+rm_words <- c("will", "use", "used", "using", "today", "can", "one", "join", "day", "week", "just", "come", "first", "last", "get", "next", "via", "dont", "also", "want", "make", "take", "may",  "still", "need", "now", "another", "maybe", "getting", "since", "way")
+FilteredWordCloud <- tm_map(FilteredWordCloud, removeWords, rm_words)
+```
+
+
+```{r}
+# Processes the data into the right format to be represented in a word cloud
+
+dtm <- TermDocumentMatrix(FilteredWordCloud)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m), decreasing = TRUE)
+d <- data.frame(word = names(v), freq = v)
+l <- nrow(d)
+
+# Change to square root to reduce difference between sizes
+d_sqrt <- d %>% 
+  mutate(freq = sqrt(freq))
+  my_graph <- wordcloud2(
+  d_sqrt,
+  size = 0.5, # sqrt : 0.4
+  minSize = 0.1, # sqrt : 0.2
+  rotateRatio = 0.6,
+  gridSize = 5, # sqrt : 5
+  color = c(rev(tail(greenpal(50), 40)),
+            rep("grey", nrow(d_sqrt) - 40)) # green and grey
+)
+
+# This part lets you knit it to html
+# If knitting wordcloud to html does not work, try running  webshot::install_phantomjs() in console then knit again.
+saveWidget(my_graph, "tmp.html", selfcontained = F)
+webshot("tmp.html", "wc1.png", delay = 7, vwidth = 1500, vheight = 1500)
+
+my_graph
+# If knitting wordcloud to html does not work, try running  webshot::install_phantomjs() in console then knit again.
+
+```
+
+> Analysis text from tweets is not starightforward and may require advanced tools 
+
+#### Can we use "*sentiment analysis*"? {-}
+
+```{r, sentiment, cache = TRUE}
+
+SentimentDF <- all_tweets_unique_no_missing %>%
+  mutate(
+    # add spaces before the # and @
+    clean_text = gsub(x = text, pattern = "(?=@)",
+                      replacement = " ", perl = TRUE) %>%
+      gsub(x = ., pattern = "(?=#)", replacement = " ", perl = TRUE) %>%
+      str_replace_all(pattern = "\n", replacement = "") %>%
+      str_replace_all(pattern = "&amp;", replacement = "") %>%
+      # remove accounts mentionned with an @
+      str_replace_all(pattern = "@([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove URLs
+      str_replace_all(pattern = "http([[:punct:]]*\\w*)*", replacement = "") %>%
+      # remove punctuaction signs except #
+      gsub(x = ., pattern = "(?!#)[[:punct:]]", replacement = "", perl = TRUE) %>%
+      # lowercase the text
+      tolower() %>%
+      # remove isolated digits
+      str_replace_all(pattern = " [[:digit:]]* ", replacement = " ")
+  )
+SentimentDF <- tibble(text = SentimentDF$text)
+```
+
+
+Using the package *sentimentr* one can perform sentiment analysis to see if a tweet has a positive or negative "*sentiment*" (see the (package documentation)[https://github.com/trinker/sentimentr]). 
+
+> Sentiment analysis, using *sentimentr*, attempts to take into account valence shifters (*i.e.*, negators, amplifiers, de-amplifiers, and adversative conjunctions):
+
+ - A negator flips the sign of a polarized word (*e.g.*, "I do **not** like it.").
+ - An amplifier (intensifier) increases the impact of a polarized word (*e.g.*, "I **really** like it.").
+ - A de-amplifier (downtoner) reduces the impact of a polarized word (*e.g.*, "I **hardly** like it."). 
+ - An adversative conjunction overrules the previous clause containing a polarized word *e.g.*, "I like it **but** it's not worth it."). 
+
+ > The computation may be quite lengthly 
+ 
+```{r sentComputation, cache = TRUE}
+Twitter_sentiment = SentimentDF %>%
+  get_sentences(text) %>% 
+  sentiment() %>% 
+  drop_na() %>%   # empty lines
+  mutate(sentence_id = row_number())
+```
+
+
+```{r sentgraph, cache = TRUE}
+ggplot(Twitter_sentiment, aes(x = sentiment)) +
+  geom_histogram( position = 'identity', fill ='#756bb1') +
+  geom_vline(xintercept= mean(Twitter_sentiment$sentiment), lwd=1, linetype=2, color="red") + 
+  theme_minimal() 
+
+```
+
+
+> The distribution of sentiment seems to be slightly negatively located (in red, the mean).
+
+This is a bit expected as a lot of the vocabulary used in these tweets might have a negative connotation to them, and the sentiment analysis may not be able to fully understand the context of a tweet.
+
+
+# Annex and references
+
+What does the variables collected on twitter mean?
+https://developer.twitter.com/en/docs/twitter-api/v1/data-dictionary/object-model/user
+
+The [specific circles used in this example](https://www.mapdevelopers.com/draw-circle-tool.php?circles=%5B%5B76689.76%2C27.5049544%2C85.4483199%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B91616.81%2C27.2130295%2C87.1781859%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B91619.73%2C28.2130746%2C83.9130072%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B355184.82%2C29.0513805%2C76.8945441%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B422679.41%2C23.3409718%2C81.3992046%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B361813.03%2C23.4453266%2C73.3829127%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B749248.71%2C13.8533658%2C76.4622081%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B180827.75%2C23.3615792%2C90.8443173%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B841526.2%2C12.8775724%2C123.4327373%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B457756.83%2C46.9466028%2C109.3292569%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B437495.01%2C47.3707787%2C97.3660224%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B214565.51%2C9.8427313%2C106.7990243%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B247882.63%2C13.2331436%2C109.525889%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B188656.22%2C21.2264551%2C105.4168248%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B155905.54%2C16.6894843%2C108.3192506%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B123453.13%2C18.6374107%2C106.515434%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B171973.69%2C22.6611081%2C87.3122865%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%2C%5B171974.07%2C18.4232859%2C83.6205928%2C%22%23AAAAAA%22%2C%22%23000000%22%2C0.4%5D%5D)
+
+
+Other useful resources:
+
+- https://www.earthdatascience.org/courses/earth-analytics/get-data-using-apis/use-twitter-api-r/
+- https://m-clark.github.io/text-analysis-with-R/sentiment-analysis.html
+
