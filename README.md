@@ -1,1 +1,14 @@
-# Twitter-Webscraping
+# Twitter and Webscraping Tutorial
+
+The following code was used as a teaching example on how to gather data from unusual sources. It was used as a part of a course in Big Data and Gender Statistics hosted by the SIAP division of the United Nations. 
+
+## 
+
+This repository contains two separate files:
+
+APIcode.R: This file is a step-by-step guide on the topic of "What is an API? And how do I work with it in R?". It pulls data from the World Health Organizations Athena API.
+
+Twittercode.R: This is a step-by-step guide on how to work with Twitters API to gather data. It gathers tweets regarding issues like domestic violence from 
+different geographical areas in Asian countries.
+
+
